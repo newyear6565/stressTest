@@ -171,7 +171,7 @@ transactionFromAdmin()
 {
 
     nonce=$(curl -s -H Accept:application/json -X POST http://localhost:9685/v1/user/accountstate  -d '{"address":"'$moneyAddress'"}')
-    nonce=$(python tool.py balance $nonce)
+    nonce=$(python tool.py nonce $nonce)
     #echo $nonce
     . $accountFile
     i=0
@@ -179,19 +179,22 @@ transactionFromAdmin()
     while(($i < $contractCount))
     do
         ((nonce=$nonce+1))
+        #echo "------------------------"
         #echo ${accounts[$i]}
         #echo $moneyAddress
         #echo $nonce
         #echo $moneyPwd
-        #echo "__________"
         raw=$(curl -s -H 'Content-Type: application/json' -X POST http://localhost:9685/v1/admin/sign -d '{"transaction":{"from":"'$moneyAddress'","to":"'${accounts[$i]}'", "value":"10000000000000000000","nonce":'$nonce',"gasPrice":"1000000","gasLimit":"2000000"}, "passphrase":"'$moneyPwd'"}')
         #echo $raw
+        #echo "-----------------------"
+        #echo
+        #echo
         raw=$(python tool.py raw $raw)
         curl -s -H 'Content-Type: application/json' -X POST http://localhost:9685/v1/user/rawtransaction -d '{"data":"'$raw'"}' > /dev/null
         ((i=$i+1))
     done
-    echo "wait a moment"
-    sleep 30
+    echo "wait 1 minute"
+    sleep 60
 }
 
 
@@ -215,6 +218,7 @@ createContract()
     #while (( $i < 1 ));
     do
         ((nn=${nonce[$i]}+1))
+        curl -s -H 'Content-Type: application/json' -X POST http://localhost:9685/v1/admin/account/unlock -d '{"address":"'${accounts[$i]}'","passphrase":"'$passwd'","duration":"43200000000000"}'
         cmd=$(printf "$contractCreateRpc" ${accounts[$i]} ${accounts[$i]} $nn "$data" $passwd)
         echo $cmd" >> "$crjson  >> $ccsh
         echo >> $ccsh
@@ -635,8 +639,8 @@ prepare()
     createLua
     callContract
 
-    echo "wait 10 minute to test"
-    sleep 600
+    echo "wait 1 minute to test"
+    sleep 60
     run
 }
 
