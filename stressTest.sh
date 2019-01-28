@@ -218,7 +218,7 @@ createContract()
     #while (( $i < 1 ));
     do
         ((nn=${nonce[$i]}+1))
-        curl -s -H 'Content-Type: application/json' -X POST http://localhost:9685/v1/admin/account/unlock -d '{"address":"'${accounts[$i]}'","passphrase":"'$passwd'","duration":"43200000000000"}'
+        $(curl -s -H 'Content-Type: application/json' -X POST http://localhost:9685/v1/admin/account/unlock -d '{"address":"'${accounts[$i]}'","passphrase":"'$passwd'","duration":"43200000000000"}')
         cmd=$(printf "$contractCreateRpc" ${accounts[$i]} ${accounts[$i]} $nn "$data" $passwd)
         echo $cmd" >> "$crjson  >> $ccsh
         echo >> $ccsh
@@ -286,7 +286,8 @@ callContract()
     getNonce
     createLua
     echo "call contract..."
-    ./wrk -s ex_contract.lua -t1 -c1 -d5 --latency http://localhost:9685 > call.log 
+    ./wrk -s ex_contract.lua -t1 -c1 -d10 --latency http://localhost:9685 > call.log
+    sleep 11 
 
 }
 
