@@ -1,4 +1,15 @@
 import sys, json
+def analysis(param):
+	#try:
+	success=json.loads(param)['success']
+	total=json.loads(param)['total']
+	print success
+	print total
+	
+	print '%.2f%%' % (float(success)/float(total) * 100)
+	
+	#except:
+	print '0%'
 
 def status(param):
 	try:
@@ -108,7 +119,12 @@ def checkNrId():
 							errflag = 0
 		i = i + 1
 	total = ok + err
-	print '{"total":'+str(total)+', "success":'+str(ok)+', "error":'+str(err)+'}'
+	#print '{"total":'+str(total)+', "success":'+str(ok)+', "error":'+str(err)+'}'
+	t=int(total)
+	if t == 0:
+		print '0.0%'
+	else:
+		print '%.2f%%' % (float(ok)/float(total) * 100)
 
 def checkNrResult():
 	i = 0
@@ -216,7 +232,12 @@ def checkNrResultCompared():
 							errflag = 0
 		i = i + 1
 	total = ok + err
-	print '{"total":'+str(total)+', "success":'+str(ok)+', "error":'+str(err)+'}'
+	#print '{"total":'+str(total)+', "success":'+str(ok)+', "error":'+str(err)+'}'
+	t=int(total)
+	if t == 0:
+		print '0.0%'
+	else:
+		print '%.2f%%' % (float(ok)/float(total) * 100)
 
 def checkNrIdCompared():
         i = 0
@@ -281,7 +302,12 @@ def checkNrIdCompared():
                                                         errflag = 0
                 i = i + 1
         total = ok + err
-        print '{"total":'+str(total)+', "success":'+str(ok)+', "error":'+str(err)+'}'
+        #print '{"total":'+str(total)+', "success":'+str(ok)+', "error":'+str(err)+'}'
+	t=int(total)
+	if t == 0:
+		print '0.0%'
+	else:
+		print '%.2f%%' % (float(ok)/float(total) * 100)
 
 
 def checkDipNowCompared():
@@ -327,7 +353,12 @@ def checkDipNowCompared():
 				finally:
 					errflag = 0
 	total = ok + err
-	print '{"total":'+str(total)+', "success":'+str(ok)+', "error":'+str(err)+'}'
+	#print '{"total":'+str(total)+', "success":'+str(ok)+', "error":'+str(err)+'}'
+	t=int(total)
+	if t == 0:
+		print '0.0%'
+	else:
+		print '%.2f%%' % (float(ok)/float(total) * 100)
 
 def checkDipRandomCompared():
 	i = 0
@@ -378,7 +409,12 @@ def checkDipRandomCompared():
 		i = i + 1
 		count = 0
 	total = ok + err
-	print '{"total":'+str(total)+', "success":'+str(ok)+', "error":'+str(err)+'}'
+	#print '{"total":'+str(total)+', "success":'+str(ok)+', "error":'+str(err)+'}'
+	t=int(total)
+	if t == 0:
+		print '0.0%'
+	else:
+		print '%.2f%%' % (float(ok)/float(total) * 100)
 
 def checkDipNow():
 	i = 0
@@ -494,6 +530,8 @@ if __name__ == "__main__":
 		checkDipNowCompared()
 	elif sys.argv[1]=='checkDipRandom':
 		checkDipRandomCompared()
+	elif sys.argv[1]=='analysis':
+		analysis(sys.argv[2])
 	else:
 		print 'error'
          

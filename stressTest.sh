@@ -471,9 +471,15 @@ getRandomDip()
     sleep $timedelay
 }
 
+percentage()
+{
+    echo $(awk 'BEGIN{printf "%.1f%%\n",('$1'/'$2')*100}')
+}
+
 checkNrId()
 {
     cd $1
+    echo "passing rate:"
     python ../tool.py checkNrId
     cd ..
 }
@@ -481,6 +487,7 @@ checkNrId()
 checkNrResult()
 {
     cd $1
+    echo "passing rate:"
     python ../tool.py checkNrResult
     cd ..
 }
@@ -488,6 +495,7 @@ checkNrResult()
 checkDipNow()
 {
     cd $1
+    echo "passing rate:"
     python ../tool.py checkDipNow
     cd ..
 }
@@ -495,6 +503,7 @@ checkDipNow()
 checkDipRandom()
 {
     cd $1
+    echo "passing rate:"
     python ../tool.py checkDipRandom
     cd ..
 }
@@ -503,7 +512,7 @@ checkDipRandom()
 #getLatestDip "result2019-01-23-11-39-19"
 #getNrResutFromId "result2019-01-23-11-39-19"
 #getNrResult "result2019-01-23-11-39-19"
-#checkNrId "result2019-01-24-10-19-09"
+#checkNrId "result2019-01-24-16-56-46"
 #checkNrResult "result2019-01-24-10-19-09"
 #checkDipNow "result2019-01-24-10-19-09"
 #checkDipRandom "result2019-01-24-10-19-09"
@@ -584,7 +593,7 @@ run()
 
 checkAll()
 {
-    nrResultDir = $1
+    nrResultDir=$1
     echo "check dir "$1
 
     echo
