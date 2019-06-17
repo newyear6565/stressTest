@@ -1,0 +1,425 @@
+diff --git a/explorer-backend/build-expl.sh b/explorer-backend/build-expl.sh
+index b50ecb1..f6bf32a 100644
+--- a/explorer-backend/build-expl.sh
++++ b/explorer-backend/build-expl.sh
+@@ -1 +1 @@
+-./gradlew clean build -x test
+\ No newline at end of file
++./gradlew clean build -x test
+diff --git a/explorer-backend/src/main/java/io/nebulas/explorer/controller/RpcController.java b/explorer-backend/src/main/java/io/nebulas/explorer/controller/RpcController.java
+index 4a92cbf..47021a8 100644
+--- a/explorer-backend/src/main/java/io/nebulas/explorer/controller/RpcController.java
++++ b/explorer-backend/src/main/java/io/nebulas/explorer/controller/RpcController.java
+@@ -11,6 +11,7 @@ import io.nebulas.explorer.enums.NebTransactionStatusEnum;
+ import io.nebulas.explorer.enums.NebTransactionTypeEnum;
+ import io.nebulas.explorer.model.JsonResult;
+ import io.nebulas.explorer.model.PageIterator;
++import io.nebulas.explorer.model.vo.ContractAddrVo;
+ import io.nebulas.explorer.model.vo.AddressVo;
+ import io.nebulas.explorer.model.vo.BlockVo;
+ import io.nebulas.explorer.model.vo.Nrc20TransactionVo;
+@@ -361,6 +362,35 @@ public class RpcController {
+         return result;
+     }
+ 
++    @RequestMapping("/contracts")
++    public JsonResult contracts(@RequestParam(value = "p", required = false, defaultValue = "1") int page) {
++        if (page < 1) {
++            page = 1;
++        }
++        if (page > MAX_PAGE) {
++            page = MAX_PAGE;
++        }
++
++        List<NebAddress> contractAddrList = nebAddressService.findContractAddressOrderById(page, PAGE_SIZE);
++
++        List<ContractAddrVo> voList = Lists.newLinkedList();
++        int i = 1 + (page - 1) * PAGE_SIZE;
++        for (NebAddress contractAddr : contractAddrList) {
++            ContractAddrVo vo = new ContractAddrVo().build(contractAddr);
++            voList.add(vo);
++            i++;
++        }
++
++        JsonResult result = JsonResult.success();
++        long totalContractAddrCnt = nebAddressService.countTotalContractAddrCnt();
++        long totalPage = totalContractAddrCnt / PAGE_SIZE + 1;
++        result.put("total", totalContractAddrCnt);
++        result.put("totalPage", totalPage);
++        result.put("currentPage",page);
++        result.put("contracts", voList);
++        return result;
++    }
++
+     @RequestMapping("/contract/holders")
+     public JsonResult contractHolders(
+             @RequestParam(value = "p", required = false, defaultValue = "1") int page,
+@@ -828,11 +858,35 @@ public class RpcController {
+             totalTxnCnt = Long.valueOf(txnCnt);
+         }
+ 
++	key = "addrCnt";
++        Long totalAddrCnt = 0L;
++        String addrCnt = redisTemplate.opsForValue().get(key);
++        if (addrCnt == null || addrCnt.isEmpty()) {
++            totalAddrCnt = nebAddressService.countTotalAddressCnt();
++            redisTemplate.opsForValue().set(key, totalAddrCnt.toString());
++            redisTemplate.opsForValue().getOperations().expire(key, 15, TimeUnit.MINUTES);
++
++        } else {
++            totalAddrCnt = Long.valueOf(addrCnt);
++        }
++
++        key = "contractCnt";
++        Long totalContractCnt = 0L;
++        String contractCnt = redisTemplate.opsForValue().get(key);
++        if (contractCnt == null || contractCnt.isEmpty()) {
++            totalContractCnt = nebAddressService.countTotalContractAddrCnt();
++            redisTemplate.opsForValue().set(key, totalContractCnt.toString());
++            redisTemplate.opsForValue().getOperations().expire(key, 15, TimeUnit.MINUTES);
++
++        } else {
++            totalContractCnt = Long.valueOf(contractCnt);
++        }
++
+         NasAccount ninetyDayAccount = nasAccountService.getNasAccountFromNinetyDays();
++        long newAddressCount = totalAddrCnt - ninetyDayAccount.getAddressCount();
+ 
+-        long newAddressCount = nasAccount.getAddressCount() - ninetyDayAccount.getAddressCount();
+-        result.put("totalAddressCount", nasAccount.getAddressCount());
+-        result.put("totalContractCount", nasAccount.getContractCount());
++        result.put("totalAddressCount", totalAddrCnt);
++        result.put("totalContractCount", totalContractCnt);
+         result.put("txnCnt", totalTxnCnt);
+         result.put("newAddressCount", newAddressCount);
+         result.put("oldAddressCount", ninetyDayAccount.getAddressCount());
+diff --git a/explorer-backend/src/main/java/io/nebulas/explorer/jobs/UpdataAddressInfo.java b/explorer-backend/src/main/java/io/nebulas/explorer/jobs/UpdataAddressInfo.java
+index 7ee2637..96a756c 100644
+--- a/explorer-backend/src/main/java/io/nebulas/explorer/jobs/UpdataAddressInfo.java
++++ b/explorer-backend/src/main/java/io/nebulas/explorer/jobs/UpdataAddressInfo.java
+@@ -4,6 +4,7 @@ import com.alibaba.fastjson.JSONArray;
+ import com.alibaba.fastjson.JSONObject;
+ import io.nebulas.explorer.config.YAMLConfig;
+ import io.nebulas.explorer.domain.BlockSyncRecord;
++import io.nebulas.explorer.domain.NasAccount;
+ import io.nebulas.explorer.domain.NebAddress;
+ import io.nebulas.explorer.domain.NebBlock;
+ import io.nebulas.explorer.domain.NebTransaction;
+@@ -24,6 +25,7 @@ import org.springframework.stereotype.Component;
+ 
+ import java.util.Base64;
+ import java.util.Date;
++import java.util.Calendar;
+ import java.util.List;
+ import java.util.concurrent.TimeUnit;
+ 
+@@ -34,15 +36,26 @@ import static com.alibaba.fastjson.JSON.toJSONString;
+ @Component
+ public class UpdataAddressInfo {
+     private final NasAccountService nasAccountService;
++    private final NebAddressService nebAddressService;
+     private static final long i = 5;
+     private static long k = 0;
+ 
+-    @Scheduled(cron = "0/5 * * * * ?")
++    @Scheduled(cron = "55 59 23 * * ?")
+     public void updataNasAccountInfo() {
+-	if(k > i) {
+-           log.warn("####  completed");
+-        }
+-        log.warn("####  UpdataAddressInfo is running {}", k);
+-	k++;
++        Calendar cal = Calendar.getInstance();
++        cal.set(cal.get(Calendar.YEAR), cal.get(Calendar.MONTH), cal.get(Calendar.DAY_OF_MONTH), 0, 0, 0);
++	cal.add(Calendar.DAY_OF_MONTH, 1);
++        Date date = cal.getTime();
++
++        NasAccount nasAccount = new NasAccount();
++        nasAccount.setAddressCount((int)nebAddressService.countTotalAddressCnt());
++        nasAccount.setContractCount((int)nebAddressService.countTotalContractAddrCnt());
++        nasAccount.setTimestamp(date);
++        nasAccount.setCreatedAt(date);
++        nasAccount.setUpdatedAt(date);
++        nasAccount.setAddressIncrement(0);
++        nasAccount.setContractIncrement(0);
++        nasAccountService.setNasAccountRecord(nasAccount);
++        log.warn("## updata count");
+     }
+ }
+diff --git a/explorer-backend/src/main/java/io/nebulas/explorer/mapper/NebAddressMapper.java b/explorer-backend/src/main/java/io/nebulas/explorer/mapper/NebAddressMapper.java
+index 9e6c22d..cd328f6 100644
+--- a/explorer-backend/src/main/java/io/nebulas/explorer/mapper/NebAddressMapper.java
++++ b/explorer-backend/src/main/java/io/nebulas/explorer/mapper/NebAddressMapper.java
+@@ -26,10 +26,14 @@ public interface NebAddressMapper {
+ 
+     long countTotalAddressCnt();
+ 
++    long countTotalContractAddrCnt();
++
+     NebAddress getByHash(String hash);
+ 
+     List<NebAddress> findAddressOrderByBalance(@Param("offset") int offset, @Param("limit") int limit);
+ 
++    List<NebAddress> findContractAddressOrderById(@Param("offset") int offset, @Param("limit") int limit);
++
+     List<NebAddress> findAddressMapByAddressHash(List<String> addressHashes);
+ 
+     List<AddrTypeVo> countAccountGroupByType();
+diff --git a/explorer-backend/src/main/java/io/nebulas/explorer/service/blockchain/NasAccountService.java b/explorer-backend/src/main/java/io/nebulas/explorer/service/blockchain/NasAccountService.java
+index e26dc5a..601add6 100644
+--- a/explorer-backend/src/main/java/io/nebulas/explorer/service/blockchain/NasAccountService.java
++++ b/explorer-backend/src/main/java/io/nebulas/explorer/service/blockchain/NasAccountService.java
+@@ -17,6 +17,10 @@ public class NasAccountService {
+ 
+     private final NasAccountMapper nasAccountMapper;
+ 
++    public boolean setNasAccountRecord(NasAccount record) {
++        return nasAccountMapper.insertSelective(record) > 0;
++    }
++
+     public NasAccount getLatestNasAccount() {
+         NasAccount nasAccount = nasAccountMapper.selectByLatest();
+         if (nasAccount == null) {
+@@ -36,7 +40,9 @@ public class NasAccountService {
+ 
+         List<NasAccount> nasAccount = nasAccountMapper.selectByCondition(cond);
+         if (nasAccount.size() == 0) {
+-            return null;
++            NasAccount tmp = new NasAccount();
++            tmp.setAddressCount(0);
++            return tmp; 
+         }
+         return nasAccount.get(0);
+     }
+diff --git a/explorer-backend/src/main/java/io/nebulas/explorer/service/blockchain/NebAddressService.java b/explorer-backend/src/main/java/io/nebulas/explorer/service/blockchain/NebAddressService.java
+index f7af324..0fff18c 100644
+--- a/explorer-backend/src/main/java/io/nebulas/explorer/service/blockchain/NebAddressService.java
++++ b/explorer-backend/src/main/java/io/nebulas/explorer/service/blockchain/NebAddressService.java
+@@ -70,6 +70,17 @@ public class NebAddressService {
+     }
+ 
+     /**
++     * query contract address information
++     *
++     * @param page     current page
++     * @param pageSize number of information per page
++     * @return contract address list
++     */
++    public List<NebAddress> findContractAddressOrderById(int page, int pageSize) {
++        return nebAddressMapper.findContractAddressOrderById((page - 1) * pageSize, pageSize);
++    }
++
++    /**
+      * According to miner hash query address number
+      *
+      * @return the number of address
+@@ -78,6 +89,15 @@ public class NebAddressService {
+         return nebAddressMapper.countTotalAddressCnt();
+     }
+ 
++    /**
++     * Query contract address number
++     *
++     * @return the number of contract address
++     */
++    public long countTotalContractAddrCnt() {
++        return nebAddressMapper.countTotalContractAddrCnt();
++    }
++
+     public Map<NebAddressTypeEnum, Long> countAccountGroupByType() {
+         List<AddrTypeVo> voList = nebAddressMapper.countAccountGroupByType();
+         if (CollectionUtils.isEmpty(voList)) {
+diff --git a/explorer-backend/src/main/resources/application.yml b/explorer-backend/src/main/resources/application.yml
+index d61ce38..7e4494d 100644
+--- a/explorer-backend/src/main/resources/application.yml
++++ b/explorer-backend/src/main/resources/application.yml
+@@ -12,7 +12,7 @@ spring:
+     platform: mysql
+     initialize: false
+     schema: classpath:schema.sql
+-    url: jdbc:mysql://127.0.0.1:3306/explorer?autoCommit=true&autoReconnect=true&useUnicode=true&tinyInt1isBit=false&zeroDateTimeBehavior=round&characterEncoding=UTF-8&yearIsDateType=false
++    url: jdbc:mysql://127.0.0.1:3306/explorer?autoCommit=true&autoReconnect=true&useUnicode=true&tinyInt1isBit=false&zeroDateTimeBehavior=round&characterEncoding=UTF-8&yearIsDateType=false&useSSL=true
+     username: explorer
+     password: 123456
+     separator: ;
+@@ -21,7 +21,7 @@ spring:
+     jmx-enabled: true
+     type: com.zaxxer.hikari.HikariDataSource
+     hikari:
+-      pool-name: explorer
++      pool-name: explorermain
+       maximum-pool-size: 30
+       allow-pool-suspension: true
+       login-timeout: 100
+@@ -42,7 +42,7 @@ mybatis:
+     default-fetch-size: 100
+     default-statement-timeout: 300
+ grpc:
+-  host: 13.57.96.40
++  host: 52.76.103.107
+   port: 8684
+   enableKeepAlive: true
+   keepAliveWithoutCalls: true
+@@ -55,7 +55,7 @@ sync:
+   subscribe : true
+ apiHost:
+   coinmarketcap: https://api.coinmarketcap.com
+-  nebulas: https://testnet.nebulas.io
++  nebulas: http://52.76.103.107:8685
+   gateio: https://data.gateio.io
+ redis:
+   host: 127.0.0.1
+@@ -85,16 +85,16 @@ spring:
+     platform: mysql
+     initialize: false
+     schema: classpath:schema.sql
+-    url: jdbc:mysql://nebulas.cvajxeo2mhiu.us-west-1.rds.amazonaws.com:3306/explorer_test?autoCommit=true&autoReconnect=true&useUnicode=true&tinyInt1isBit=false&zeroDateTimeBehavior=round&characterEncoding=UTF-8&yearIsDateType=false
++    url: jdbc:mysql://127.0.0.1:3306/explorertest?autoCommit=true&autoReconnect=true&useUnicode=true&tinyInt1isBit=false&zeroDateTimeBehavior=round&characterEncoding=UTF-8&yearIsDateType=false&useSSL=false
+     username: explorer
+-    password: NbVgE6bQ8iM,(Aty5HBs
++    password: 123456
+     separator: ;
+-    name: expltest
++    name: explorertest
+     continue-on-error: false
+     jmx-enabled: true
+     type: com.zaxxer.hikari.HikariDataSource
+     hikari:
+-      pool-name: explorer
++      pool-name: explorertest
+       maximum-pool-size: 30
+       allow-pool-suspension: true
+       login-timeout: 100
+@@ -110,8 +110,8 @@ server:
+   port: 32736
+ environment: test
+ page:
+-  baseUrl: http://52.53.225.118
+-  hostUrl: http://52.53.225.118
++  baseUrl: http://120.92.74.201
++  hostUrl: http://120.92.74.201
+ pendingTxExpiredTime : 1
+ redis:
+   host: 127.0.0.1
+diff --git a/explorer-backend/src/main/resources/banner.txt b/explorer-backend/src/main/resources/banner.txt
+index 38faf76..d1d1288 100644
+--- a/explorer-backend/src/main/resources/banner.txt
++++ b/explorer-backend/src/main/resources/banner.txt
+@@ -1,13 +1,12 @@
+ ${AnsiColor.BRIGHT_YELLOW}
+ 
+-888b      88            88                      88
+-8888b     88            88                      88
+-88 `8b    88            88                      88
+-88  `8b   88  ,adPPYba, 88,dPPYba,  88       88 88 ,adPPYYba, ,adPPYba,
+-88   `8b  88 a8P_____88 88P'    "8a 88       88 88 ""     `Y8 I8[    ""
+-88    `8b 88 8PP""""""" 88       d8 88       88 88 ,adPPPPP88  `"Y8ba,
+-88     `8888 "8b,   ,aa 88b,   ,a8" "8a,   ,a88 88 88,    ,88 aa    ]8I
+-88      `888  `"Ybbd8"' 8Y"Ybbd8"'   `"YbbdP'Y8 88 `"8bbdP"Y8 `"YbbdP"'
++   ______                            __ 
++ .' ___  |                          |  ]
++/ .'   \_|    .--.     .--.     .--.| | 
++| |   ____  / .'`\ \ / .'`\ \ / /'`\' | 
++\ `.___]  | | \__. | | \__. | | \__/  | 
++ `._____.'   '.__.'   '.__.'   '.__.;__]
++
+ 
+ ${AnsiColor.BRIGHT_BLUE}
+ ::: Explorer (version:0.0.1-SNAPSHOT) :::             ＼(^O^)／    Spring-Boot ${spring-boot.version}
+diff --git a/explorer-backend/src/main/resources/io/nebulas/explorer/mapper/NebAddressMapper.xml b/explorer-backend/src/main/resources/io/nebulas/explorer/mapper/NebAddressMapper.xml
+index 9e68ffa..5957605 100644
+--- a/explorer-backend/src/main/resources/io/nebulas/explorer/mapper/NebAddressMapper.xml
++++ b/explorer-backend/src/main/resources/io/nebulas/explorer/mapper/NebAddressMapper.xml
+@@ -34,6 +34,12 @@
+         FROM `neb_address`
+     </select>
+ 
++    <select id="countTotalContractAddrCnt" resultType="java.lang.Long">
++        SELECT count(1)
++        FROM `neb_address`
++	WHERE type='1'
++    </select>
++
+     <select id="countAccountGroupByType" resultType="io.nebulas.explorer.model.vo.AddrTypeVo">
+         select `type` as type,count(*) as amount
+         from `neb_address`
+@@ -63,5 +69,13 @@
+         <foreach collection="list" item="item" open="(" close=")" separator=",">#{item,jdbcType=VARCHAR}</foreach>
+     </select>
+ 
++    <select id="findContractAddressOrderById" parameterType="map" resultMap="BaseResultMap">
++        SELECT
++        <include refid="Base_Column_List"/>
++        FROM `neb_address`
++	WHERE type='1'
++        ORDER BY `id` DESC
++        LIMIT ${offset},${limit}
++    </select>
+ 
+-</mapper>
+\ No newline at end of file
++</mapper>
+diff --git a/explorer-backend/start-expl.sh b/explorer-backend/start-expl.sh
+index 6cb7d79..a6ca71d 100755
+--- a/explorer-backend/start-expl.sh
++++ b/explorer-backend/start-expl.sh
+@@ -1,2 +1,2 @@
+ #!/usr/bin/env bash
+-java -Xms1024m -Xmx2048m -Xdebug -Xrunjdwp:server=y,transport=dt_socket,address=8085,suspend=n -jar ./build/libs/explorer-0.0.1-SNAPSHOT.jar --spring.profiles.active=test --spring.datasource.initialize=false  >console.log 2>&1 &
++nohup java -Xms1024m -Xmx2048m -Xdebug -Xrunjdwp:server=y,transport=dt_socket,address=8085,suspend=n -jar ./build/libs/explorer-0.0.1-SNAPSHOT.jar --spring.profiles.active=test --spring.datasource.initialize=false  >console.log 2>&1 &
+diff --git a/explorer-front/src/assets/app-config.js b/explorer-front/src/assets/app-config.js
+index bad260c..3fb5dc5 100644
+--- a/explorer-front/src/assets/app-config.js
++++ b/explorer-front/src/assets/app-config.js
+@@ -10,14 +10,15 @@ module.exports = {
+             // url: "http://54.70.225.59:8081/api/", // 旭存
+             // url: "http://172.16.15.124:8080/api/", // xihao
+             // url: "http://39.96.38.130:8081/api/", //aliyun
+-            url: "https://explorer-backend.nebulas.io/api/", //正式
++            url: "http://120.92.74.201:8090/api/", //正式
++            // url: "https://120.92.74.201/api/",
+             atp: "n1zUNqeBPvsyrw5zxp9mKcDdLTjuaEL7s39"
+         },
+         testnet: {
+             name: "Testnet",
+             // url: "http://172.16.15.124:8080/api/", // xihao
+             // url: "http://18.188.124.226:8080/api/", // 公司测试服务器的ip
+-            url: "https://explorer-test-backend.nebulas.io/api/", //正式
++            url: "http://120.92.74.201:8090/api/", //正式
+             // url: "http://39.96.38.130:8080/api/", //aliyun
+             // url: "http://172.16.15.94:8080/api/", // xucun
+             atp: "n1rR5uiy4vDUn7TPMAtJ8Y1Eo54K6EYvSJ6"
+diff --git a/explorer-front/src/index.html b/explorer-front/src/index.html
+index e07acea..1f67e82 100644
+--- a/explorer-front/src/index.html
++++ b/explorer-front/src/index.html
+@@ -9,7 +9,7 @@
+     <link href="https://fonts.googleapis.com/css?family=Open+Sans:400,600" rel="stylesheet">
+ </head>
+ <body>
+-    <script src="https://sdkcdn.atlaspro.io/libs/atp.ads.js"></script>
++    <!-- <script src="https://sdkcdn.atlaspro.io/libs/atp.ads.js"></script> -->
+     <!-- <script src="https://sdkcdn.atlaspro.io/libs/atp.ads.test.js"></script> -->
+     <!-- <script src="http://172.16.15.188:8888/atp.bundle.js"></script> -->
+     <div class=vue>
+diff --git a/explorer-front/src/index.js b/explorer-front/src/index.js
+index 8a92f10..0c46d13 100644
+--- a/explorer-front/src/index.js
++++ b/explorer-front/src/index.js
+@@ -91,11 +91,11 @@ vApp = new Vue({
+     data: {
+         timestamp: Date.now(),
+         showModalLoading: false,
+-        showAtpAds: true,
+-        mainnetDipStarted: true,
+-        mainnetGotDipWinners: true,
+-        testnetDipStarted: true,
+-        testnetGotDipWinners: true
++        showAtpAds: false,
++        mainnetDipStarted: false,
++        mainnetGotDipWinners: false,
++        testnetDipStarted: false,
++        testnetGotDipWinners: false
+     },
+     el: ".vue",
+     router: vRouter
