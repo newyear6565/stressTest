@@ -1,0 +1,343 @@
+diff --git a/explorer-backend/build.gradle b/explorer-backend/build.gradle
+index 840bcb3..2b44c68 100644
+--- a/explorer-backend/build.gradle
++++ b/explorer-backend/build.gradle
+@@ -85,7 +85,6 @@ dependencies {
+     compile('org.springframework.boot:spring-boot-starter')
+     compile('com.zaxxer:HikariCP')
+     compile('org.springframework.boot:spring-boot-starter-jdbc')
+-    compile('org.flywaydb:flyway-core')
+     compile('org.springframework.boot:spring-boot-starter-thymeleaf')
+     compile('org.springframework.boot:spring-boot-starter-web')
+     compile('org.springframework.boot:spring-boot-configuration-processor')
+diff --git a/explorer-backend/src/main/java/io/nebulas/explorer/controller/RpcController.java b/explorer-backend/src/main/java/io/nebulas/explorer/controller/RpcController.java
+index 5e501a7..4f81bd5 100644
+--- a/explorer-backend/src/main/java/io/nebulas/explorer/controller/RpcController.java
++++ b/explorer-backend/src/main/java/io/nebulas/explorer/controller/RpcController.java
+@@ -944,10 +944,8 @@ public class RpcController {
+      */
+     @RequestMapping("/nasinfo")
+     public JsonResult getNasMainnetInfo() {
++	JsonResult result = JsonResult.success();
+ 
+-        JsonResult result = JsonResult.success();
+-        long totalAddressCount = nebAddressService.countTotalAddressCnt();
+-        long totalContractCount = nebAddressService.getTotalContractCount();
+         NasAccount nasAccount = nasAccountService.getLatestNasAccount();
+ 
+         if (nasAccount == null) {
+@@ -967,11 +965,35 @@ public class RpcController {
+             totalTxnCnt = Long.valueOf(txnCnt);
+         }
+ 
++        key = "addrCnt";
++        Long totalAddrCnt = 0L;
++        String addrCnt = redisTemplate.opsForValue().get(key);
++        if (addrCnt == null || addrCnt.isEmpty()) {
++            totalAddrCnt = nebAddressService.countTotalAddressCnt();
++            redisTemplate.opsForValue().set(key, totalAddrCnt.toString());
++            redisTemplate.opsForValue().getOperations().expire(key, 15, TimeUnit.MINUTES);
++
++        } else {
++            totalAddrCnt = Long.valueOf(addrCnt);
++        }
++
++        key = "contractCnt";
++	Long totalContractCnt = 0L;
++        String contractCnt = redisTemplate.opsForValue().get(key);
++        if (contractCnt == null || contractCnt.isEmpty()) {
++            totalContractCnt = nebAddressService.countTotalContractAddrCnt();
++            redisTemplate.opsForValue().set(key, totalContractCnt.toString());
++            redisTemplate.opsForValue().getOperations().expire(key, 15, TimeUnit.MINUTES);
++
++        } else {
++            totalContractCnt = Long.valueOf(contractCnt);
++        }
++
+         NasAccount ninetyDayAccount = nasAccountService.getNasAccountFromNinetyDays();
++        long newAddressCount = totalAddrCnt - ninetyDayAccount.getAddressCount();
+ 
+-        long newAddressCount = nasAccount.getAddressCount() - ninetyDayAccount.getAddressCount();
+-        result.put("totalAddressCount", totalAddressCount);
+-        result.put("totalContractCount", totalContractCount);
++        result.put("totalAddressCount", totalAddrCnt);
++        result.put("totalContractCount", totalContractCnt);
+         result.put("txnCnt", totalTxnCnt);
+         result.put("newAddressCount", newAddressCount);
+         result.put("oldAddressCount", ninetyDayAccount.getAddressCount());
+diff --git a/explorer-backend/src/main/java/io/nebulas/explorer/mapper/NebAddressMapper.java b/explorer-backend/src/main/java/io/nebulas/explorer/mapper/NebAddressMapper.java
+index 6f52964..f452746 100644
+--- a/explorer-backend/src/main/java/io/nebulas/explorer/mapper/NebAddressMapper.java
++++ b/explorer-backend/src/main/java/io/nebulas/explorer/mapper/NebAddressMapper.java
+@@ -37,6 +37,8 @@ public interface NebAddressMapper {
+ 
+     long countTotalAddressCnt();
+ 
++    long countTotalContractAddrCnt();
++
+     NebAddress getByHash(String hash);
+ 
+     List<NebAddress> findAddressOrderByBalance(@Param("offset") int offset, @Param("limit") int limit);
+diff --git a/explorer-backend/src/main/java/io/nebulas/explorer/service/blockchain/NasAccountService.java b/explorer-backend/src/main/java/io/nebulas/explorer/service/blockchain/NasAccountService.java
+index ff8eccc..d0f7c75 100644
+--- a/explorer-backend/src/main/java/io/nebulas/explorer/service/blockchain/NasAccountService.java
++++ b/explorer-backend/src/main/java/io/nebulas/explorer/service/blockchain/NasAccountService.java
+@@ -38,7 +38,9 @@ public class NasAccountService {
+ 
+         List<NasAccount> nasAccount = nasAccountMapper.selectByCondition(cond);
+         if (nasAccount.size() == 0) {
+-            return null;
++            NasAccount tmp = new NasAccount();
++            tmp.setAddressCount(0);
++            return tmp;
+         }
+         return nasAccount.get(0);
+     }
+diff --git a/explorer-backend/src/main/java/io/nebulas/explorer/service/blockchain/NebAddressService.java b/explorer-backend/src/main/java/io/nebulas/explorer/service/blockchain/NebAddressService.java
+index fadb480..ea92fdb 100644
+--- a/explorer-backend/src/main/java/io/nebulas/explorer/service/blockchain/NebAddressService.java
++++ b/explorer-backend/src/main/java/io/nebulas/explorer/service/blockchain/NebAddressService.java
+@@ -108,6 +108,15 @@ public class NebAddressService {
+         return nebAddressMapper.countTotalAddressCnt();
+     }
+ 
++    /**
++     * Query contract address number
++     *
++     * @return the number of contract address
++     */
++    public long countTotalContractAddrCnt() {
++        return nebAddressMapper.countTotalContractAddrCnt();
++    }
++
+     public Map<NebAddressTypeEnum, Long> countAccountGroupByType() {
+         List<AddrTypeVo> voList = nebAddressMapper.countAccountGroupByType();
+         if (CollectionUtils.isEmpty(voList)) {
+diff --git a/explorer-backend/src/main/resources/application.yml b/explorer-backend/src/main/resources/application.yml
+index dc072f8..c087178 100644
+--- a/explorer-backend/src/main/resources/application.yml
++++ b/explorer-backend/src/main/resources/application.yml
+@@ -2,8 +2,6 @@ server:
+   port: 8080
+ logging:
+   config: classpath:logback.xml
+-flyway:
+-  baseline-on-migrate: true
+ spring:
+   application:
+     name: explorer
+@@ -14,7 +12,7 @@ spring:
+     platform: mysql
+     initialize: false
+     schema: classpath:schema.sql
+-    url: jdbc:mysql://127.0.0.1:3306/explorer?autoCommit=true&autoReconnect=true&useUnicode=true&tinyInt1isBit=false&zeroDateTimeBehavior=round&characterEncoding=UTF-8&yearIsDateType=false
++    url: jdbc:mysql://127.0.0.1:3306/explorer?autoCommit=true&autoReconnect=true&useUnicode=true&tinyInt1isBit=false&zeroDateTimeBehavior=round&characterEncoding=UTF-8&yearIsDateType=false&useSSL=true
+     username: explorer
+     password: 123456
+     separator: ;
+@@ -23,9 +21,10 @@ spring:
+     jmx-enabled: true
+     type: com.zaxxer.hikari.HikariDataSource
+     hikari:
+-      pool-name: explorer
++      pool-name: explorermain
+       maximum-pool-size: 30
+       allow-pool-suspension: true
++      login-timeout: 100
+       connection-init-sql: SELECT 1
+       connection-test-query: SELECT 1
+       connection-timeout: 5000
+@@ -43,7 +42,7 @@ mybatis:
+     default-fetch-size: 100
+     default-statement-timeout: 300
+ grpc:
+-  host: 47.92.203.173
++  host: 52.76.103.107
+   port: 8684
+   enableKeepAlive: true
+   keepAliveWithoutCalls: true
+@@ -53,10 +52,10 @@ page:
+   hostUrl: http://localhost:8080
+ sync:
+   open: true
+-  subscribe: true
++  subscribe : true
+ apiHost:
+   coinmarketcap: https://api.coinmarketcap.com
+-  nebulas: https://testnet.nebulas.io
++  nebulas: http://52.76.103.107:8685
+   gateio: https://data.gateio.io
+ redis:
+   host: 127.0.0.1
+@@ -64,37 +63,16 @@ redis:
+   password:
+   database: 2
+ environment: dev
+-pendingTxExpiredTime: 1
++pendingTxExpiredTime : 1
+ 
+ ---
+ spring:
+   profiles: dev
+-  datasource:
+-    url: jdbc:mysql://172.16.15.150:3306/explorer_test?autoCommit=true&autoReconnect=true&useUnicode=true&tinyInt1isBit=false&zeroDateTimeBehavior=round&characterEncoding=UTF-8&yearIsDateType=false
+-    username: root
+-    password: root@mysql
+   thymeleaf:
+     cache: false
+     mode: LEGACYHTML5
+-redis:
+-  host: 172.16.15.150
+-  port: 6379
+-  password:
+-  database: 2
+ environment: dev
+-pendingTxExpiredTime: 1
+-grpc:
+-  host: 47.92.203.173
+-  port: 9684
+-  enableKeepAlive: true
+-  keepAliveWithoutCalls: true
+-  keepAliveTimeout: 2
+-
+-#apiHost:
+-#  coinmarketcap: https://api.coinmarketcap.com
+-## 测试私链，用于测试DIP交易的解析
+-#  nebulas: http://47.92.203.173:9685
+-#  gateio: https://data.gateio.io
++pendingTxExpiredTime : 1
+ 
+ ---
+ spring:
+@@ -107,16 +85,16 @@ spring:
+     platform: mysql
+     initialize: false
+     schema: classpath:schema.sql
+-    url: jdbc:mysql://127.0.0.1:3306/explorer_test?autoCommit=true&autoReconnect=true&useUnicode=true&tinyInt1isBit=false&zeroDateTimeBehavior=round&characterEncoding=UTF-8&yearIsDateType=false
++    url: jdbc:mysql://127.0.0.1:3306/explorertest?autoCommit=true&autoReconnect=true&useUnicode=true&tinyInt1isBit=false&zeroDateTimeBehavior=round&characterEncoding=UTF-8&yearIsDateType=false&useSSL=false
+     username: explorer
+-    password: kl@fkddfkFsa
++    password: 123456
+     separator: ;
+-    name: expltest
++    name: explorertest
+     continue-on-error: false
+     jmx-enabled: true
+     type: com.zaxxer.hikari.HikariDataSource
+     hikari:
+-      pool-name: explorer
++      pool-name: explorertest
+       maximum-pool-size: 30
+       allow-pool-suspension: true
+       login-timeout: 100
+@@ -129,27 +107,17 @@ spring:
+       initializationFailTimeout: 200
+       register-mbeans: false
+ server:
+-  port: 8080
++  port: 32736
+ environment: test
+ page:
+-  baseUrl: http://52.53.225.118
+-  hostUrl: http://52.53.225.118
+-pendingTxExpiredTime: 1
++  baseUrl: http://120.92.74.201
++  hostUrl: http://120.92.74.201
++pendingTxExpiredTime : 1
+ redis:
+   host: 127.0.0.1
+   port: 6379
+   password:
+   database: 2
+-apiHost:
+-  coinmarketcap: https://api.coinmarketcap.com
+-  nebulas: http://47.92.203.173:8685
+-  gateio: https://data.gateio.io
+-grpc:
+-  host: 47.92.203.173
+-  port: 8684
+-  enableKeepAlive: true
+-  keepAliveWithoutCalls: true
+-  keepAliveTimeout: 2
+ ---
+ spring:
+   profiles: prod
+@@ -157,4 +125,4 @@ spring:
+     cache: true
+     mode: LEGACYHTML5
+ environment: production
+-pendingTxExpiredTime: 48
++pendingTxExpiredTime : 48
+diff --git a/explorer-backend/src/main/resources/db/migration/V4__nat_support.sql b/explorer-backend/src/main/resources/db/migration/V4__nat_support.sql
+deleted file mode 100644
+index 8d5c696..0000000
+--- a/explorer-backend/src/main/resources/db/migration/V4__nat_support.sql
++++ /dev/null
+@@ -1,26 +0,0 @@
+-create table if not exists nat_record
+-(
+-  id        INTEGER,
+-  address   varchar(64) not null,
+-  block     INTEGER,
+-  txHash    varchar(128),
+-  amount    varchar(64) default '',
+-  source    INTEGER,
+-  timestamp TIMESTAMP,
+-  createdAt TIMESTAMP
+-);
+-
+-create index nat_record_address_index
+-  on nat_record (address);
+-
+-create unique index nat_record_id_uindex
+-  on nat_record (id);
+-
+-create index nat_record_source_index
+-  on nat_record (source);
+-
+-create index nat_record_txHash_index
+-  on nat_record (txHash);
+-
+-create index nat_record_block_index
+-  on nat_record (block);
+\ No newline at end of file
+diff --git a/explorer-backend/src/main/resources/db/migration/V5__nat_record_id_auto.sql b/explorer-backend/src/main/resources/db/migration/V5__nat_record_id_auto.sql
+deleted file mode 100644
+index 18a9a1d..0000000
+--- a/explorer-backend/src/main/resources/db/migration/V5__nat_record_id_auto.sql
++++ /dev/null
+@@ -1 +0,0 @@
+-alter table `nat_record` modify id int auto_increment;
+\ No newline at end of file
+diff --git a/explorer-backend/src/main/resources/io/nebulas/explorer/mapper/NebAddressMapper.xml b/explorer-backend/src/main/resources/io/nebulas/explorer/mapper/NebAddressMapper.xml
+index 5ad87b1..56f409d 100644
+--- a/explorer-backend/src/main/resources/io/nebulas/explorer/mapper/NebAddressMapper.xml
++++ b/explorer-backend/src/main/resources/io/nebulas/explorer/mapper/NebAddressMapper.xml
+@@ -47,6 +47,12 @@
+         FROM `neb_address`
+     </select>
+ 
++    <select id="countTotalContractAddrCnt" resultType="java.lang.Long">
++        SELECT count(1)
++        FROM `neb_address`
++        WHERE type='1'
++    </select>
++
+     <select id="countAccountGroupByType" resultType="io.nebulas.explorer.model.vo.AddrTypeVo">
+         select `type` as type,count(*) as amount
+         from `neb_address`
+@@ -93,4 +99,4 @@
+     </select>
+ 
+ 
+-</mapper>
+\ No newline at end of file
++</mapper>
+diff --git a/explorer-backend/start-expl.sh b/explorer-backend/start-expl.sh
+index 6cb7d79..a6ca71d 100755
+--- a/explorer-backend/start-expl.sh
++++ b/explorer-backend/start-expl.sh
+@@ -1,2 +1,2 @@
+ #!/usr/bin/env bash
+-java -Xms1024m -Xmx2048m -Xdebug -Xrunjdwp:server=y,transport=dt_socket,address=8085,suspend=n -jar ./build/libs/explorer-0.0.1-SNAPSHOT.jar --spring.profiles.active=test --spring.datasource.initialize=false  >console.log 2>&1 &
++nohup java -Xms1024m -Xmx2048m -Xdebug -Xrunjdwp:server=y,transport=dt_socket,address=8085,suspend=n -jar ./build/libs/explorer-0.0.1-SNAPSHOT.jar --spring.profiles.active=test --spring.datasource.initialize=false  >console.log 2>&1 &
